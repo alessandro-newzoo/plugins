@@ -62,7 +62,7 @@ const normalizeReplacement = ({
   return ret;
 };
 
-console.log(os.tmpdir());
+console.log(path.resolve(os.tmpdir()));
 
 const normalizeAutofix = ({ replacements: _replacements = [], ...rest }: Autofix): Autofix => ({
   ...rest,

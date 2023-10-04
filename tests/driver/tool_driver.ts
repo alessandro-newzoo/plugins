@@ -2,7 +2,8 @@ import Debug from "debug";
 import * as fs from "fs";
 import path from "path";
 import { SetupSettings } from "tests/driver";
-import { ARGS } from "tests/utils";
+import { ARGS, REPO_ROOT } from "tests/utils";
+import { getTrunkVersion } from "tests/utils/trunk_config";
 
 import { GenericTrunkDriver } from "./driver";
 
@@ -47,12 +48,35 @@ export class TrunkToolDriver extends GenericTrunkDriver {
     this.toEnableVersion = version;
   }
 
+  getTrunkYamlContents(trunkVersion: string | undefined): string {
+    return `version: 0.1
+cli:
+  version: ${trunkVersion ?? getTrunkVersion()}
+plugins:
+  sources:
+  - id: trunk
+    local: ${REPO_ROOT}
+lint:
+  ignore:
+    - linters: [ALL]
+      paths:
+        - tmp/**
+        - node_modules/**
+        - .trunk/configs/**
+        - .gitattributes
+`;
+  }
+
+  async setUpWithInstall() {
+    await this.setUp();
+    await this.installTool();
+  }
+
   /**
    * Setup a sandbox test directory by copying in test contents and conditionally:
    * 1. Creating a git repo
    * 2. Dumping a newly generated trunk.yaml
    * 3. Enabling the specified 'tool'
-   * 4. Sync to make sure it's available
    */
   async setUp() {
     await super.setUp();
@@ -81,14 +105,52 @@ export class TrunkToolDriver extends GenericTrunkDriver {
         this.enabledVersion = foundIn.groups.version;
         this.debug("Enabled %s", this.enabledVersion);
       }
-
-      // Sync the tool to ensure it's available
-      await this.runTrunk(["tools", "install"]);
-      if (!fs.existsSync(path.resolve(this.sandboxPath, ".trunk", "tools", this.tool))) {
-        throw new Error(`Failed to install ${this.tool}`);
-      }
     } catch (error) {
       console.warn(`Failed to enable ${this.tool}`, error);
+      if ("stdout" in (error as any)) {
+        // trunk-ignore(eslint/@typescript-eslint/no-unsafe-member-access)
+        console.log("Error output:", ((error as any).stdout as Buffer).toString());
+      } else {
+        console.log("Error keys:  ", Object.keys(error as object));
+      }
+    }
+  }
+
+  async installTool() {
+    // Enable tested tool if specified
+    if (!this.tool || !this.sandboxPath) {
+      console.error("Tool or sandbox path not specified - we should not be here!");
+      return;
+    }
+    try {
+      // Sync the tool to ensure it's available
+      await this.runTrunk(["tools", "install", this.tool, "--ci"]);
+      const tools_subdir = fs.existsSync(path.resolve(this.sandboxPath ?? "", ".trunk/dev-tools"))
+        ? "dev-tools"
+        : "tools";
+      for (const shim of this.getShims()) {
+        if (
+          !fs.existsSync(
+            path.resolve(
+              this.sandboxPath,
+              ".trunk",
+              tools_subdir,
+              `${shim}${process.platform == "win32" ? ".bat" : ""}`,
+            ),
+          )
+        ) {
+          throw new Error(`Could not install or find installed ${shim}`);
+        }
+      }
+      this.debug("Installed %s", this.tool);
+    } catch (error) {
+      console.warn(`Failed to enable ${this.tool}`, error);
+      if ("stdout" in (error as any)) {
+        // trunk-ignore(eslint/@typescript-eslint/no-unsafe-member-access)
+        console.log("Error output:", ((error as any).stdout as Buffer).toString());
+      } else {
+        console.log("Error keys:  ", Object.keys(error as object));
+      }
     }
   }
 
@@ -98,10 +160,10 @@ export class TrunkToolDriver extends GenericTrunkDriver {
   extractToolVersion = (): string => {
     const toEnableVersion = this.toEnableVersion ?? ARGS.linterVersion;
 
+    // TODO(Tyler): We should leverage latest here and use the ReleaseVersionService
     if (!toEnableVersion || toEnableVersion === "Latest") {
       return "";
     } else if (toEnableVersion === "KnownGoodVersion") {
-      // TODO(Tyler): Add fallback to use lint.downloads.version to match trunk fallback behavior.
       // trunk-ignore-begin(eslint/@typescript-eslint/no-unsafe-member-access,eslint/@typescript-eslint/no-unsafe-call)
       return (
         (this.getFullTrunkConfig().tool.definitions.find(
@@ -120,8 +182,26 @@ export class TrunkToolDriver extends GenericTrunkDriver {
   /**** Execution methods ****/
 
   async runTool(command: string[]): Promise<TrunkToolRunResult> {
+    const tools_subdir = fs.existsSync(path.resolve(this.sandboxPath ?? "", ".trunk/dev-tools"))
+      ? "dev-tools"
+      : "tools";
     try {
-      const { stdout, stderr } = await this.run(`.trunk/tools/${command[0]}`, command.slice(1));
+      if (process.platform == "win32") {
+        const { stdout, stderr } = await this.run("powershell", [
+          `.trunk/${tools_subdir}/${command[0]}.bat`,
+          ...command.slice(1),
+        ]);
+        return {
+          exitCode: 0,
+          stdout,
+          stderr,
+        };
+      }
+
+      const { stdout, stderr } = await this.run(
+        `.trunk/${tools_subdir}/${command[0]}`,
+        command.slice(1),
+      );
       return {
         exitCode: 0,
         stdout,
@@ -137,5 +217,21 @@ export class TrunkToolDriver extends GenericTrunkDriver {
       };
       // trunk-ignore-end(eslint/@typescript-eslint/no-unsafe-member-access)
     }
+  }
+
+  getShims(): string[] {
+    // get the full trunk config
+    // trunk-ignore-begin(eslint/@typescript-eslint/no-unsafe-assignment)
+    // trunk-ignore-begin(eslint/@typescript-eslint/no-unsafe-member-access,eslint/@typescript-eslint/no-unsafe-call)
+    const fullTrunkConfig = this.getFullTrunkConfig();
+    // get the tool definition
+    const toolDefinition = fullTrunkConfig.tools.definitions.find(
+      ({ name }: { name: string }) => name === this.tool,
+    );
+    // get the shims
+    const shims = toolDefinition?.shims ?? [];
+    return shims.map(({ name }: { name: string }) => name) as string[];
+    // trunk-ignore-end(eslint/@typescript-eslint/no-unsafe-assignment)
+    // trunk-ignore-end(eslint/@typescript-eslint/no-unsafe-member-access,eslint/@typescript-eslint/no-unsafe-call)
   }
 }

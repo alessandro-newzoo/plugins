@@ -6,7 +6,7 @@ import path from "path";
 import * as git from "simple-git";
 import { SetupSettings } from "tests/driver";
 import { ARGS, DOWNLOAD_CACHE, REPO_ROOT, TEMP_PREFIX, TEST_DATA } from "tests/utils";
-import { getTrunkConfig, newTrunkYamlContents } from "tests/utils/trunk_config";
+import { getTrunkConfig } from "tests/utils/trunk_config";
 import * as util from "util";
 import YAML from "yaml";
 
@@ -52,7 +52,7 @@ const testCreationFilter = (topLevelDir: string) => (file: string) => {
   return true;
 };
 
-export class GenericTrunkDriver {
+export abstract class GenericTrunkDriver {
   /** Refers to the absolute path to linter's subdir. */
   testDir: string;
   /** Created in /tmp during setup. */
@@ -74,6 +74,8 @@ export class GenericTrunkDriver {
     this.debug = debug;
     this.debugNamespace = this.debug.namespace.replace("Driver:", "");
   }
+
+  abstract getTrunkYamlContents(trunkVersion: string | undefined): string;
 
   /**
    * Setup a sandbox test directory by copying in test contents and conditionally:
@@ -101,7 +103,7 @@ export class GenericTrunkDriver {
       }
       fs.writeFileSync(
         path.resolve(this.sandboxPath, ".trunk/trunk.yaml"),
-        newTrunkYamlContents(this.setupSettings.trunkVersion),
+        this.getTrunkYamlContents(this.setupSettings.trunkVersion),
       );
     }
 
@@ -125,8 +127,15 @@ export class GenericTrunkDriver {
       // The trunk launcher is not designed to handle concurrent installs.
       // This command may fail if another test installs at the same time.
       // Don't block if this happens.
-      // trunk-ignore(eslint/@typescript-eslint/no-unsafe-member-access)
-      console.warn(`Error running --help with stdout: %s\nand stderr: %s`, err.stdout, err.stderr);
+      // trunk-ignore-begin(eslint/@typescript-eslint/no-unsafe-member-access)
+      if (!(err.stderr as string).includes("Cannot remove item")) {
+        console.warn(
+          `Error running --help with stdout: %s\nand stderr: %s`,
+          err.stdout,
+          err.stderr,
+        );
+      }
+      // trunk-ignore-end(eslint/@typescript-eslint/no-unsafe-member-access)
     }
   }
 
@@ -273,10 +282,8 @@ export class GenericTrunkDriver {
    * Return the yaml result of parsing the output of `trunk config print` in the test sandbox.
    */
   getFullTrunkConfig = (): any => {
-    const printConfig = execSync(`${ARGS.cliPath ?? "trunk"} config print`, {
-      cwd: this.sandboxPath,
-      env: executionEnv(this.sandboxPath ?? ""),
-    });
+    const [executable, args, options] = this.buildExecArgs(["config", "print"]);
+    const printConfig = execSync([executable, ...args].join(" "), options);
     return YAML.parse(printConfig.toString().replaceAll("\r\n", "\n"));
   };
 

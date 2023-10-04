@@ -1,26 +1,4 @@
 version: 0.1
-downloads:
-  - name: terraform
-    version: 1.1.4
-    downloads:
-      # macos arm64 was introduced after this version.
-      - os: macos
-        url: https://releases.hashicorp.com/terraform/${version}/terraform_${version}_darwin_amd64.zip
-        version: <1.0.2
-      - os:
-          linux: linux
-          macos: darwin
-          windows: windows
-        cpu:
-          x86_64: amd64
-          arm_64: arm64
-        url: https://releases.hashicorp.com/terraform/${version}/terraform_${version}_${os}_${cpu}.zip
-tools:
-  definitions:
-    - name: terraform
-      download: terraform
-      shims: [terraform]
-      known_good_version: 1.1.4
 lint:
   definitions:
     - name: terraform
@@ -32,7 +10,7 @@ lint:
           output: terraform_validate
           target: ${parent}
           run: terraform validate -json
-          run_linter_from: directory
+          run_from: ${target_directory}
           success_codes: [0, 1]
           enabled: false
         - name: fmt
@@ -85,7 +63,6 @@ lint:
       files: [terraform]
       type: terraform_validate
       command: [terraform, validate, -json]
-      run_linter_from: directory
       download: terraform
       success_codes: [0, 1]
       environment:

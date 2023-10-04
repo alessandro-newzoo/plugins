@@ -51,7 +51,8 @@ runtimes:
           list: ["${linter}/bin"]
         - name: GOPATH
           value: ${linter}
-      known_good_version: 1.19.5
+      known_good_version: 1.21.0
       version_commands:
         - run: go version
           parse_regex: go version go(.*) (.*)
+      shims: [go, gofmt]
